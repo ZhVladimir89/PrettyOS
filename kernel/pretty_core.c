@@ -165,13 +165,14 @@ OS_IdleTask (void* args)
  * Returns      :  OS_RET_OK, OS_ERR_PARAM
  */
 OS_tRet
-OS_Init (CPU_tWORD* pStackBaseIdleTask, CPU_tWORD  stackSizeIdleTask)
+OS_Init (CPU_tSTK* pStackBaseIdleTask, CPU_tSTK  stackSizeIdleTask)
 {
 
     OS_tRet ret;
     CPU_t32U idx;
 
-    /* Initialize Common PrettyOS Global/static to default values.  */
+    OS_Init_CPU_Hook();								/* Call port specific initialization code.				  		*/
+    												/* Initialize Common PrettyOS Global/static to default values.  */
     OS_currentTask      = OS_NULL(OS_TASK_TCB);
     OS_nextTask         = OS_NULL(OS_TASK_TCB);
     OS_IntNestingLvl    = 0U;
@@ -604,6 +605,8 @@ OS_TimerTick (void)
     }
 
     OS_CRTICAL_BEGIN();
+
+    OS_TimerTick_CPU_Hook();										/* Call port specific tick hook.						  							*/
 
     for(i = 0; i < OS_MAX_PRIO_ENTRIES; i++)
     {

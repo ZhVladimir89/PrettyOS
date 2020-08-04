@@ -28,12 +28,8 @@
 
 #include "../bsp.h"
 
-#if !(defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(_WIN32))
-	#define printf(...) UARTprintf(__VA_ARGS__)
-	/* Acts like standard C printf() except it doesn't support float printing. */
-	extern void UARTprintf(const char *pcString, ...);
-#else
-	#include <stdio.h>
-#endif	/* An Operating System not a microcontroller.	*/
+#define printf(...) UARTprintf(__VA_ARGS__)
+/* Acts like standard C printf() except it doesn't support float printing. */
+extern void UARTprintf(const char *pcString, ...);
 
 #endif /* UARTSTDIO_H_ */

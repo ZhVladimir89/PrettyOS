@@ -163,10 +163,10 @@ typedef void*               CPU_tPtr;                    /* Pointer Type        
 #endif
 
 /*-------------------------------- CPU_t* ------------------------------------*/
-typedef CPU_tWORD   CPU_tALIGN; /* CPU Data word alignment size.              */
-typedef CPU_t32U    CPU_tSR;    /* Define size of CPU status register         */
-
-
+typedef CPU_tWORD   CPU_tALIGN; 	/* CPU Data word alignment size.          */
+typedef CPU_t32U    CPU_tSR;    	/* Define size of CPU status register.    */
+typedef CPU_t32U	CPU_tSTK;		/* Define CPU stack data type.			  */
+typedef CPU_t32U	CPU_tSTK_SIZE; 	/* Define CPU stack size data type.		  */
 
 /*
 *******************************************************************************
@@ -283,7 +283,7 @@ void OS_CPU_InterruptContexSwitch(void);
 void OS_CPU_FirstStart(void);
 
 /*
- * Function:  OS_CPU_TaskInit
+ * Function:  OS_CPU_TaskStackInit
  * --------------------
  * Initialize the stack frame of the task being created.
  * This function is a processor specific.
@@ -299,10 +299,10 @@ void OS_CPU_FirstStart(void);
  *
  * Notes:   Be aware of how the CPU stacking happens in the memory space.
  */
-CPU_tWORD* OS_CPU_TaskInit(void (*TASK_Handler)(void* params),
+CPU_tSTK* OS_CPU_TaskStackInit(void (*TASK_Handler)(void* params),
                              void *params,
-                             CPU_tWORD* pStackBase,
-                             CPU_tWORD  stackSize);
+							 CPU_tSTK* pStackBase,
+							 CPU_tSTK_SIZE  stackSize);
 
 /*
  * Function:  OS_CPU_SystemTimerHandler

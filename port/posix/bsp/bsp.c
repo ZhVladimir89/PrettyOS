@@ -59,22 +59,38 @@ BSP_HardwareSetup(void) {
 		/* 	EMPTY	*/
 }
 
-void
-BSP_DelayMilliseconds (unsigned long ms) {
-#if (_POSIX_C_SOURCE >= 199309L)
-    struct timespec ts;
-    ts.tv_sec = ms / 1000U;
-    ts.tv_nsec = (ms % 1000U) * 1000000U;
-    nanosleep(&ts, NULL);
-#else
-    usleep(ms * 1000U);
-#endif
+void delay(int milliseconds)
+{
+    long pause;
+    clock_t now,then;
+
+    pause = milliseconds*(CLOCKS_PER_SEC/1000);
+    now = then = clock();
+    while( (now-then) < pause )
+        now = clock();
 }
 
 void
+BSP_DelayMilliseconds (unsigned long ms) {
+//#if (_POSIX_C_SOURCE >= 199309L)
+//    struct timespec ts;
+//    ts.tv_sec = ms / 1000U;
+//    ts.tv_nsec = (ms % 1000U) * 1000000U;
+//    nanosleep(&ts, NULL);
+//#else
+//    usleep(ms * 1000U);
+//#endif
+	delay(ms);
+}
+
+/*
+ * Simple implementation like what should happens if it was on a bare metal.
+ * */
+void
 BSP_UART_SendByte(const unsigned char cData)
 {
-	printf("%c",cData);
+	putchar((int)cData);				/* Send the char to stdout.												*/
+	fflush(stdout);						/* Flush the write buffer. So it doesn't wait for buffer to be full.	*/
 }
 
 void
