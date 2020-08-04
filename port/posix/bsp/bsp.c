@@ -25,7 +25,7 @@ SOFTWARE.
 /*
  * Author   : Yahia Farghaly Ashour
  *
- * Purpose  : Wrapper implementation of BSP APIs according to POSIX standards.
+ * Purpose  : Wrapper implementation of BSP APIs according to POSIX standards on a Linux machine.
  *
  * Language:  C
  */
@@ -35,52 +35,182 @@ SOFTWARE.
 *                               Includes Files                                *
 *******************************************************************************
 */
-
-#include <bsp.h>                    /* BSP Exposed APIs.                        */
-#include <stdio.h>					/* Standard I/O C routines.					*/
-#include <stdlib.h>					/* Standard C routines.						*/
-#if (_POSIX_C_SOURCE >= 199309L)
-	#include <time.h>   			/* for nanosleep 							*/
-#else
-	#include <unistd.h> 			/* for usleep 								*/
+#ifndef _XOPEN_SOURCE
+	#define _XOPEN_SOURCE	600
 #endif
 
+#include <bsp.h>                    /* BSP Exposed APIs.                        		*/
+#include <stdio.h>					/* Standard I/O C routines.							*/
+#include <stdlib.h>					/* Standard C routines.								*/
+#include <math.h>					/* For round() function. Add -lm for gcc linker. 	*/
+#include <time.h>   				/* for nanosleep 									*/
+#include <unistd.h> 				/* for sysconf 										*/
+#include <sys/types.h>
+#include <sys/syscall.h>
+#include <sys/resource.h>
 /*
 *******************************************************************************
-*                               BSP Macros                                    *
+*                               BSP Globals                                   *
 *******************************************************************************
 */
 
-/* Running System Clock in Hertz. */
-#define SYS_CLOCK_HZ    16000000U
+#define USE_POSIX_SLEEP_IN_DELAY_LOOP	0U
+
+static double __delay_loop_time_nanosecond = 0.0f;
+static double __system_cpu_frequency_MHz	= 0.0f;
+
+static void __delay_loop (void);
+static void __delay_loop_calibration (void);
 
 void
 BSP_HardwareSetup(void) {
-		/* 	EMPTY	*/
+
+	system("clear");				/* Clear the console.						*/
+	printf("[BSP]: Initialization starts ... \n");
+
+	printf("[BSP]: #Cores = %d\n", (int)sysconf( _SC_NPROCESSORS_ONLN ));
+	fflush(stdout);
+
+	/* Extract Core#1 speed from /proc/cpuinfo .								*/
+	{
+		FILE *fp;
+		char* command = "cat /proc/cpuinfo | grep 'cpu MHz' | cut -d: -f2 | head -n1";
+		char output[20] = { 0 };
+		fp = popen(command,"r");
+		fscanf(fp,"%s",&output[0]);	/* Store the output value in the array char	*/
+		fclose(fp);
+
+		__system_cpu_frequency_MHz = strtof(output,NULL);
+	}
+
+	printf("[BSP]: Processor Core#1 Frequency  = %f MHz\n",__system_cpu_frequency_MHz);
+	fflush(stdout);
+
+	printf("[BSP]: Calibrating __delay_loop() for the current processor speed ...\n");
+
+	__delay_loop_calibration();
+
+	printf("\n[BSP]: Max resolution of __delay_loop() = %f milliseconds\n",__delay_loop_time_nanosecond*1e-6);
+
+	int sec = 10;
+	printf("[BSP]: Testing %d seconds delay ...\n",sec);
+	fflush(stdout);
+
+	sleep(2);
+	for(; sec > 0; sec--)
+	{
+		printf("[BSP]: ... Remaining %d seconds ... \r",sec);
+		fflush(stdout);
+		BSP_DelayMilliseconds(1000);
+	}
+
+	printf("\n");
+	fflush(stdout);
+
+	printf("[BSP]: Done ..\n");
+
+	fflush(stdout);
 }
 
-void delay(int milliseconds)
+/*
+ * Calculate the average time (in nanoseconds) which delay_loop() takes to be completely executed.
+ * This implementation assumes an almost stable running frequency of CPU.
+ * Otherwise, __delay_loop() cannot be taken seriously for busy waiting delays. Instead, set USE_POSIX_SLEEP_IN_DELAY_LOOP = 1U;
+ *  */
+void __delay_loop_calibration (void)
 {
-    long pause;
-    clock_t now,then;
+#if (USE_POSIX_SLEEP_IN_DELAY_LOOP == 0U)
+	#define TRIAL_PER_CALIBRATE 100U
+	#define	CALIBRATE_COUNT		10U
 
-    pause = milliseconds*(CLOCKS_PER_SEC/1000);
-    now = then = clock();
-    while( (now-then) < pause )
-        now = clock();
+	struct timespec start 	= { 0 , 0};
+	struct timespec end 	= { 0 , 0};
+	double 		  __total_delay_loop_time_nanosecond 		= 0.0f;
+
+	static double __accumlated_delay_loop_time_nanosecond 	= 0.0f;
+	static size_t  __calibrate_cnt							= CALIBRATE_COUNT;
+
+
+	__delay_loop_time_nanosecond 						= 0.0f;
+
+	if(__calibrate_cnt == CALIBRATE_COUNT)
+	{
+		printf("\n[__delay_loop_calibration]: #Trial/Calibration = %d , #Calibration = %d\n",TRIAL_PER_CALIBRATE,CALIBRATE_COUNT);
+		fflush(stdout);
+	}
+
+	for(size_t t = TRIAL_PER_CALIBRATE; t > 0; --t)
+	{
+		clock_gettime(CLOCK_REALTIME,&start);
+
+		__delay_loop();
+
+		clock_gettime(CLOCK_REALTIME,&end);
+
+		__delay_loop_time_nanosecond = (double)((end.tv_nsec - start.tv_nsec) + (end.tv_sec - start.tv_sec)*1e9);
+
+		__total_delay_loop_time_nanosecond += __delay_loop_time_nanosecond;
+	}
+
+	__delay_loop_time_nanosecond = __total_delay_loop_time_nanosecond / (double)TRIAL_PER_CALIBRATE;
+
+	if(__calibrate_cnt == 0)
+	{
+		__delay_loop_time_nanosecond = __accumlated_delay_loop_time_nanosecond/(double)CALIBRATE_COUNT;
+		printf("\n");
+		fflush(stdout);
+		return;
+	}
+	else
+	{
+		__accumlated_delay_loop_time_nanosecond += __delay_loop_time_nanosecond;
+		printf("\r[__delay_loop_calibration]... %f ..",__delay_loop_time_nanosecond);
+		fflush(stdout);
+		__calibrate_cnt -= 1;
+		usleep(100*1000);				/*	wait 100 ms	*/
+		__delay_loop_calibration();
+	}
+#else
+	printf("[__delay_loop_calibration]: no need. The application use POSIX sleep() for busy waiting loop.\n");
+	fflush(stdout);
+#endif
+}
+
+/*
+ * Execute a "nop" instruction for 255 iterations.
+ * */
+void __delay_loop (void)
+{
+	for(size_t i = 255U; i > 0; --i)
+	{
+		__asm volatile ("nop");		/* GNU assembly for x86 architecture.*/
+	}
 }
 
 void
 BSP_DelayMilliseconds (unsigned long ms) {
-//#if (_POSIX_C_SOURCE >= 199309L)
-//    struct timespec ts;
-//    ts.tv_sec = ms / 1000U;
-//    ts.tv_nsec = (ms % 1000U) * 1000000U;
-//    nanosleep(&ts, NULL);
-//#else
-//    usleep(ms * 1000U);
-//#endif
-	delay(ms);
+#if (USE_POSIX_SLEEP_IN_DELAY_LOOP == 1U)
+
+	#if (_POSIX_C_SOURCE >= 199309L)
+		struct timespec ts;
+		ts.tv_sec = ms / 1000U;
+		ts.tv_nsec = (ms % 1000U) * 1000000U;
+		nanosleep(&ts, NULL);
+	#else
+		usleep(ms * 1000U);
+	#endif
+
+#else
+
+	double ticks = (double)(((double)ms*1e6) / (__delay_loop_time_nanosecond));	/* Number of iterations to execute __delay_loop() to reaches the requested delay time (ms)*/
+	ticks = (unsigned long)round(ticks);
+
+	for(unsigned long t = (unsigned long)ticks; t > 0; t--)
+	{
+		__delay_loop();
+	}
+
+#endif
 }
 
 /*
@@ -93,10 +223,23 @@ BSP_UART_SendByte(const unsigned char cData)
 	fflush(stdout);						/* Flush the write buffer. So it doesn't wait for buffer to be full.	*/
 }
 
+int
+BSP_Write_to_Console (const char *format, ...)
+{
+#include <stdarg.h>
+    va_list argptr;
+    va_start(argptr, format);
+    vfprintf(stderr, format, argptr);
+    va_end(format);
+
+    fflush(stdout);
+    return 0;
+}
+
 void
 BSP_UART_ClearVirtualTerminal (void)
 {
-	system("clear");
+
 }
 
 void
@@ -132,7 +275,8 @@ BSP_LED_GreenOff(void) {
 unsigned long
 BSP_CPU_FrequencyGet(void)
 {
-    return SYS_CLOCK_HZ;
+	/* Return in Hz.		*/
+    return (unsigned long)(__system_cpu_frequency_MHz*1000*1000);
 }
 
 void

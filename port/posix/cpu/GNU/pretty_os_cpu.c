@@ -481,13 +481,13 @@ static void* CPU_TaskPosixTimerInterrupt (void  *p_arg)
 
     (void)p_arg;																 /* Not used																		*/
 
-    tspec.tv_nsec = (10e9)/OS_TICKS_PER_SEC;									 /* Regardless the CPU frequency, This simple formula gets the right periodic interval
+    tspec.tv_nsec = (1000*1000*1000)/OS_TICKS_PER_SEC;							 /* Regardless the CPU frequency, This simple formula gets the right periodic interval
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	for this POSIX thread to sleep and fire the system timer interrupt handler at
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	the end of the period.
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	For OS_TICKS_PER_SEC = 100, gives a timer interrupt every 10 milliseconds.
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	The math prove:
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	Timer_Load_Value = F_CPU/tickRate, tickRate is OS_TICKS_PER_SEC
-     	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	fire_time = Timer_Load_Value/F_CPU = 1/tickRate seconds. = 10e9/tickRate ns.	*/
+     	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	fire_time = Timer_Load_Value/F_CPU = 1/tickRate seconds. = 10^9/tickRate ns.	*/
     tspec.tv_sec  = 0U;
 
     do {
