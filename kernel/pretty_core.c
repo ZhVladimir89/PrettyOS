@@ -142,6 +142,7 @@ OS_IdleTask (void* args)
     (void)args;                 /* Prevent compiler warning.                */
     while(1)
     {
+    	OS_Idle_CPU_Hook();		/* Call low level CPU idle routine.			*/
         OS_Hook_onIdle();       /* Call user's idle function.               */
     }
 }

@@ -103,9 +103,9 @@ extern void OS_IntExit    (void);
 *******************************************************************************
 */
 
-#define PRIO_THREAD_CREATION	50U		/* Priority value for all POSIX threads.								*/
+#define PRIO_THREAD_CREATION	50U					/* Priority value for all POSIX threads.														*/
 
-										/* A common macro to terminate in case if error is returned.			*/
+													/* A common macro to terminate in case if error is returned.									*/
 #define ERROR_CHECK(func)      do {	int res = func; \
 									if (res != 0u) { \
 										printf("Error in call '%s' from %s(): %s­\r\n", #func, __FUNCTION__, strerror(res)); \
@@ -114,6 +114,16 @@ extern void OS_IntExit    (void);
 									} \
 								} while(0)
 
+
+#define CPU_IRQ_SIG        	  (SIGURG) 				/* Urgent data POSIX signal to be used as IRQ trigger signal.           						*/
+
+#define __DEBUG_CPU_PORT		0U
+
+#if (__DEBUG_CPU_PORT == 1U)
+	#define __print_debug(...) 	do { printf("\x1b[32m"); printf( __VA_ARGS__ ); printf("\x1b[0m"); fflush(stdout);}while(0)
+#else
+	#define __print_debug(...)	do {}while(0)
+#endif
 
 /*
 *******************************************************************************
@@ -125,9 +135,13 @@ typedef struct os_task_tcb_posix	OS_TCB_POSIX;
 
 struct os_task_tcb_posix
 {
-	pthread_t 	thread;						/*POSIX thread that acts as a wrapper for PrettyOS task.										*/
-	sem_t		sem_TaskCreated;			/*Protect task creation critical section.														*/
-	sem_t		sem_CtxSW;					/* Stop/Resume POSIX thread using a semaphore, acting like a context switcher to other threads. */
+	pthread_t 	thread;								/*POSIX thread that acts as a wrapper for PrettyOS task.										*/
+	sem_t		sem_TaskCreated;					/*Protect task creation critical section.														*/
+	sem_t		sem_CtxSW;							/* Stop/Resume POSIX thread using a semaphore, acting like a context switcher to other threads. */
+#ifdef __DEBUG_CPU_PORT
+	pid_t		thread_pid;
+	OS_PRIO		thread_prio;
+#endif
 };
 
 /*
@@ -136,7 +150,7 @@ struct os_task_tcb_posix
 *******************************************************************************
 */
 
-
+static  sigset_t              CPU_IRQ_SigSet;		/* The set which will contain the signals we which to capture as a CPU IRQ.						*/
 
 /*
 *******************************************************************************
@@ -147,11 +161,8 @@ struct os_task_tcb_posix
 static void* OS_TaskPosixWrapper 		 (void  *p_arg);
 static void* CPU_TaskPosixTimerInterrupt (void  *p_arg);
 
-/*
-*******************************************************************************
-*                           Functions Implementation                          *
-*******************************************************************************
-*/
+static void  CPU_IRQ_Handler (int sig);
+static void  CPU_IRQ_TimerInterruptTrigger (void);
 
 /*
 *******************************************************************************
@@ -159,21 +170,80 @@ static void* CPU_TaskPosixTimerInterrupt (void  *p_arg);
 *******************************************************************************
 */
 
+/*
+ * Function:  CPU_InterruptInit
+ * --------------------------------
+ * This function installs a fake scheme for protect critical sections code.
+ *
+ * Note(s)	:	1)	This function must be called prior to use of any CPU_InterruptDisable() and CPU_InterruptEnable().
+ *
+ */
 void CPU_InterruptInit (void)
 {
+    struct sigaction sig_action_trigger;
 
+    sigemptyset(&CPU_IRQ_SigSet);										/* Clear signal set.																	*/
+    sigaddset(&CPU_IRQ_SigSet, CPU_IRQ_SIG);;							/* Add CPU IRQ Signal to the set.														*/
+
+    memset(&sig_action_trigger, 0, sizeof(sig_action_trigger));			/* Clear sigaction structure memory.													*/
+
+    ERROR_CHECK(sigemptyset(&sig_action_trigger.sa_mask));				/* Clear signal mask which means all signals are deliverable to the caller				*/
+
+    sig_action_trigger.sa_flags = SA_NODEFER;							/* Do not prevent the signal from being received from within its own signal handler.	*/
+    sig_action_trigger.sa_handler = CPU_IRQ_Handler;					/* Set the signal handler.																*/
+
+    ERROR_CHECK(sigaction(CPU_IRQ_SIG, &sig_action_trigger, NULL));		/* Connect signal occurrence to its sigaction struct.									*/
 }
 
+/*
+ * Function:  CPU_InterruptDisable
+ * --------------------------------
+ * This function is used to disables interrupts before critical sections of code.
+ */
 void CPU_InterruptDisable (void)
 {
-
+	//__print_debug("Disable INT for %u\n",pthread_self());
+	/* The signal mask is the set of signals whose delivery is currently blocked for the caller. */
+    pthread_sigmask(SIG_BLOCK, &CPU_IRQ_SigSet, NULL);					/* Block CPU_IRQ_SigSet (has CPU_IRQ_SIG) from being deliverable to the calling thread.	*/
 }
 
+/*
+ * Function:  CPU_InterruptEnable
+ * --------------------------------
+ * This function is used to enable interrupts after critical sections of code.
+ */
 void CPU_InterruptEnable (void)
 {
-
+	//__print_debug("Enable INT for %u\n",pthread_self());
+    pthread_sigmask(SIG_UNBLOCK, &CPU_IRQ_SigSet, NULL);				/* Remove CPU_IRQ_SIG from blocked signals of the calling thread.						*/
 }
 
+/*
+ * Function:  CPU_IRQ_Handler
+ * --------------------------------
+ * CPU_IRQ_SIG signal handler.
+ *
+ * Arguments:	sig		is the signal number which invoked this handler ( i.e CPU_IRQ_SIG ).
+ *
+ */
+void CPU_IRQ_Handler (int sig)
+{
+	__print_debug("%u received IRQ sig, Calling OS_CPU_SystemTimerHandler() \n",pthread_self());
+
+	OS_CPU_SystemTimerHandler();										/* Call the timer handler which is the only handler in this port.						*/
+}
+
+/*
+ * Function:  CPU_IRQ_TimerInterruptTrigger
+ * --------------------------------
+ * Sends IRQ signal to the CPU to trigger the system timer tick.
+ */
+void  CPU_IRQ_TimerInterruptTrigger (void)
+{
+	__print_debug("Send IRQ sig from %u\n",pthread_self());
+
+    kill(getpid(), CPU_IRQ_SIG);										/* Send an CPU_IRQ_SIG signal via kill function. 										*/
+}
 /*
 *******************************************************************************
 *                           	Hook Functions	   							  *
@@ -200,7 +270,7 @@ void OS_Init_CPU_Hook (void)
         exit(-1);
     }
 
-    CPU_InterruptInit();													/*	Setup the fake critical section scheme.													*/
+    CPU_InterruptInit();													/* Setup the fake critical section scheme.													*/
 }
 
 /*
@@ -276,11 +346,25 @@ void OS_TaskDelete_CPU_Hook	(OS_TASK_TCB*	ptcb)
 {
 	OS_TCB_POSIX* ptcbPosix = (OS_TCB_POSIX*)ptcb->OSTCBExtension;
 
-	if (!pthread_equal(pthread_self(), ptcbPosix->thread)) {				/* If current thread is not the requested ptcbPosix thread, then ... 						*/
+	if (pthread_equal(pthread_self(), ptcbPosix->thread)) { 				/* If current thread is the requested ptcbPosix thread, then ... 	  						*/
 		ERROR_CHECK(pthread_cancel(ptcbPosix->thread));						/* ... Send a cancellation request to ptcbPosix thread to terminate.						*/
 	 }
 
 	free(ptcb->OSTCBExtension);												/* Deallocate the object from the memory.													*/
+}
+
+/*
+ * Function:  OS_TaskCreate_CPU_Hook
+ * --------------------------------
+ * This function is called by the OS_IdleTask().
+ *
+ * Arguments:	None.
+ *
+ * Returns	:	None.
+ */
+void OS_Idle_CPU_Hook (void)
+{
+	sleep(1);																/* For some reason, this solve a possible deadlock in this porting code :) 					*/
 }
 
 void OS_TaskCtxSW_CPU_Hook (void)
@@ -377,11 +461,12 @@ void OS_CPU_ContexSwitch (void)
     }
 
     OS_currentTask = OS_nextTask;											/* Set the next scheduled task to be the current.				 		*/
-
+    __print_debug("%s(): [%d] will switch in\n",__FUNCTION__,ptcbPosix_new->thread_prio);
     ERROR_CHECK(sem_post(&ptcbPosix_new->sem_CtxSW));						/* Post Context Switch semaphore to switch to the new task.				*/
 
     if (current_deleted == OS_FAlSE) {										/* If we're not switched out from a deleted task ...					*/
         do {
+            __print_debug("%s(): [%d] will switch out\n",__FUNCTION__,ptcbPosix_old->thread_prio);
             ret = sem_wait(&ptcbPosix_old->sem_CtxSW);						/* ... pend on it until it's scheduled again.					 		*/
             if (ret != 0 && errno != EINTR) {								/* even we're interrupted a by another system call errno value.			*/
                 raise(SIGABRT);
@@ -406,15 +491,20 @@ void OS_CPU_FirstStart (void)
     sigset_t        sig_set;
     int             signo;
 
+    __print_debug("[%u] is the  %s() \n",pthread_self(),__FUNCTION__);
 
     OS_TaskCtxSW_CPU_Hook();												/* Call Task Context Switch Hook.										*/
 
     OS_currentTask = OS_nextTask;											/* Since it's the first Context Switch, OS_currentTask should be NULL.	*/
 
     ptcbPosix 	= (OS_TCB_POSIX*)OS_currentTask->OSTCBExtension;			/* Retrieve the saved TCB POSIX structure. 								*/
+
+    CPU_InterruptDisable();													/* Disable CPU interrupts for the calling thread at this early setup. 	*/
+
     OS_Running	= OS_TRUE;													/* Active OS_Running state.												*/
 
     ERROR_CHECK(sem_post(&ptcbPosix->sem_CtxSW));							/* Active the first task context switch by posting the semaphore value.	*/
+
 
     														/*     The following code mimics CPU interrupts are enabled and the game of context switch has begun.  		*/
     ERROR_CHECK(sigemptyset(&sig_set));										/* Clear an empty set of POSIX signals.									*/
@@ -444,10 +534,19 @@ static void* OS_TaskPosixWrapper (void  *p_arg_tcb)
 	OS_TASK_TCB*	ptcb;
 	int 			ret;
 
+	__print_debug("[%u] is the  %s() with prio = %d \n",pthread_self(),__FUNCTION__,((OS_TASK_TCB*)p_arg_tcb)->TASK_priority);
+
 	ptcb		= (OS_TASK_TCB*)p_arg_tcb;
 	ptcbPosix	= (OS_TCB_POSIX*)ptcb->OSTCBExtension;		/* Retrieve the saved TCB POSIX structure.	 															*/
 
+#ifdef __DEBUG_CPU_PORT
+	ptcbPosix->thread_pid 	= sysconf(SYS_gettid);
+	ptcbPosix->thread_prio 	= ptcb->TASK_priority;
+#endif
+
 	ERROR_CHECK(sem_post(&ptcbPosix->sem_TaskCreated));		/* Ends the creation of the task's critical section.													*/
+
+	CPU_InterruptDisable();									/* Disable Interrupts for the calling thread till OS starts !											*/
 
 	ret = -1U;
 	while (ret != 0u) {
@@ -456,6 +555,8 @@ static void* OS_TaskPosixWrapper (void  *p_arg_tcb)
 			ERROR_CHECK(ret);
 		}
 	}
+    __print_debug("First Entrance: [%d] will enter\n",ptcbPosix->thread_prio);
+	CPU_InterruptEnable();									/* Enable Interrupts for the calling thread for the first context switch.								*/
 															/* Call the real user task.																				*/
 	((void (*)(void *))ptcb->TASK_EntryAddr)(ptcb->TASK_EntryArg);
 
@@ -480,6 +581,10 @@ static void* CPU_TaskPosixTimerInterrupt (void  *p_arg)
     int                 res;
 
     (void)p_arg;																 /* Not used																		*/
+
+    __print_debug("[%u] is the  %s() \n",pthread_self(),__FUNCTION__);
+
+    CPU_InterruptDisable();														 /* Disable CPU interrupts for this thread.											*/
 
     tspec.tv_nsec = (1000*1000*1000)/OS_TICKS_PER_SEC;							 /* Regardless the CPU frequency, This simple formula gets the right periodic interval
      	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	 	for this POSIX thread to sleep and fire the system timer interrupt handler at
@@ -516,7 +621,7 @@ static void* CPU_TaskPosixTimerInterrupt (void  *p_arg)
     		raise(SIGABRT);
     	}
 
-    	OS_CPU_SystemTimerHandler();											/* Call the port specific function to signal a system tick occurrence.				*/
+    	CPU_IRQ_TimerInterruptTrigger();										/* Trigger the required action for timer fires.										*/
 
     } while (1);																/* Forever loop to acts as a multi shot timer.										*/
 

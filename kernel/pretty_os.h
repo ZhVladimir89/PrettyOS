@@ -702,6 +702,8 @@ extern void OS_TaskCtxSW_CPU_Hook   (void);					/* Hooked with OS_CPU_ContexSwit
 
 extern void OS_TimerTick_CPU_Hook   (void);					/* Hooked with OS_TimerTick()			*/
 
+extern void OS_Idle_CPU_Hook		(void);					/* Hooked with OS_IdleTask				*/
+
 /*
 *******************************************************************************
 *                               Miscellaneous                                 *

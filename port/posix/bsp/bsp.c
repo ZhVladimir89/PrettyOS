@@ -54,9 +54,12 @@ SOFTWARE.
 *******************************************************************************
 */
 
-#define USE_POSIX_SLEEP_IN_DELAY_LOOP	0U
+/*[The Best Choice]: This macro enables delaying of requested ms in terms of usleep() function call. */
+#define USE_USLEEP_IN_TERMS_OF_MILLISEC		1U
 
-static double __delay_loop_time_nanosecond = 0.0f;
+#define USE_POSIX_SLEEP_IN_DELAY_LOOP		(0 || USE_USLEEP_IN_TERMS_OF_MILLISEC)	/* 1 to enable using POSIX sleep functions. 0 otherwise.*/
+
+static double __delay_loop_time_nanosecond  = 0.0f;
 static double __system_cpu_frequency_MHz	= 0.0f;
 
 static void __delay_loop (void);
@@ -85,7 +88,7 @@ BSP_HardwareSetup(void) {
 
 	printf("[BSP]: Processor Core#1 Frequency  = %f MHz\n",__system_cpu_frequency_MHz);
 	fflush(stdout);
-
+#if(USE_POSIX_SLEEP_IN_DELAY_LOOP == 0U)
 	printf("[BSP]: Calibrating __delay_loop() for the current processor speed ...\n");
 
 	__delay_loop_calibration();
@@ -106,7 +109,7 @@ BSP_HardwareSetup(void) {
 
 	printf("\n");
 	fflush(stdout);
-
+#endif
 	printf("[BSP]: Done ..\n");
 
 	fflush(stdout);
@@ -189,8 +192,12 @@ void __delay_loop (void)
 
 void
 BSP_DelayMilliseconds (unsigned long ms) {
-#if (USE_POSIX_SLEEP_IN_DELAY_LOOP == 1U)
 
+#if (USE_POSIX_SLEEP_IN_DELAY_LOOP == 1U)
+#if (USE_USLEEP_IN_TERMS_OF_MILLISEC == 0U)
+	/*[To Investigate & Fix]: Using nanosleep() or usleep(ms*1000) as a busy-wait loop
+	 * is not functioning well (in terms of delaying not context switch) with the underlying porting code.
+	 * 	*/
 	#if (_POSIX_C_SOURCE >= 199309L)
 		struct timespec ts;
 		ts.tv_sec = ms / 1000U;
@@ -199,6 +206,13 @@ BSP_DelayMilliseconds (unsigned long ms) {
 	#else
 		usleep(ms * 1000U);
 	#endif
+#else
+		/* The simple solution for the above wrong behavior. */
+		for(unsigned int t = ms; t > 0; t--)
+		{
+			usleep(1000U);
+		}
+#endif
 
 #else
 
